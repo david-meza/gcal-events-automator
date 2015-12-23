@@ -3,13 +3,13 @@ source 'https://rubygems.org'
 # May be omitted
 ruby '2.2.3'
 
-gem 'http'
-gem 'google-api-client'
+gem 'http', '~> 0.9.8'
+gem 'google-api-client', '~> 0.8.6'
 
 
 # Dev dependencies
 group :development do
 
-	gem 'pry'
+	gem 'pry', '~> 0.10.3'
 
 end
