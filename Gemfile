@@ -5,6 +5,7 @@ ruby '2.2.3'
 
 gem 'http', '~> 0.9.8'
 gem 'google-api-client', '~> 0.8.6'
+gem 'colorize', '~> 0.7.7' 
 
 
 # Dev dependencies

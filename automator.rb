@@ -6,6 +6,7 @@ require 'google/api_client/auth/storages/file_store'
 require 'fileutils'
 require 'pry'
 require 'http'
+require 'colorize'
 require 'json'
 
 
@@ -24,6 +25,7 @@ class Automator
     @raw_events = get_events
     store(@raw_events.to_json, TEMP_DB_PATH)
     update_calendar
+    remove_temp_file
     list_calendar_events
   end
 
@@ -62,6 +64,10 @@ class Automator
     file.close
   end
 
+  def remove_temp_file
+    FileUtils.remove_file(TEMP_DB_PATH, true)
+  end
+
   def get_differences
     store(@raw_events) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
     
@@ -90,7 +96,7 @@ class Automator
         changed_events << event
       # Else both events are the same and we don't need to do anything
       end
-      # Remove 
+      # Remove this event so we know that anything that's left in the end was deleted
       old_events_hash.delete(event['attributes']['OBJECTID'])
 
     end
@@ -104,18 +110,35 @@ class Automator
   end
 
   def update_calendar
-    return puts "Calendar already up to date!" if FileUtils.compare_file(DB_PATH, TEMP_DB_PATH)
+    return puts "**********************\nCalendar already up to date!\n**********************".green if FileUtils.compare_file(DB_PATH, TEMP_DB_PATH)
 
     # Find any differences between the old events db and the most recent one
     differences = get_differences
-    return unless differences
-    puts "Found #{differences[:new_events].length} new events, #{differences[:changed_events].length} events modified, and #{differences[:deleted_events].length} deleted events since last check"
-    
-    events = extract_events_data(differences[:new_events])
-    # create_calendar_events(events)
-    store(@raw_events.to_json)
-    binding.pry
-    FileUtils.remove_file(TEMP_DB_PATH, true)
+    puts "Found #{differences[:new_events].length} new events, #{differences[:changed_events].length} events modified, and #{differences[:deleted_events].length} deleted events since last check".green
+    handle_changes(differences)
+
+    store(@raw_events.to_json)    
+  end
+
+  def handle_changes(diff)
+    make_new_events(diff[:new_events]) unless diff[:new_events].empty?
+    change_existing_events(diff[:changed_events]) unless diff[:changed_events].empty?
+    erase_events(diff[:deleted_events]) unless diff[:deleted_events].empty?
+  end
+
+  def make_new_events(new_evs)
+    new_events = extract_events_data(new_evs)
+    create_calendar_events(new_events)
+  end
+
+  def change_existing_events(changed_evs)
+    changed_events = find_events(changed_evs)
+    update_events(changed_events)
+  end
+
+  def erase_events(del_evs)
+    deleted_events = find_events(del_evs)
+    delete_calendar_events(deleted_events)
   end
 
   def extract_events_data(events_arr)
@@ -133,6 +156,7 @@ class Automator
         'summary' => event['attributes']['EVENT_NAME'],
         # 'location' => '800 Howard St., San Francisco, CA 94103',
         'description' => description,
+        'status' => (event['attributes']['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(event['attributes']['STATUS']) ? event['attributes']['STATUS'].downcase : "confirmed") : "tentative"),
         'start' => {
           'dateTime' => Time.at(event['attributes']['EVENT_STARTDATE'] / 1000).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
@@ -154,21 +178,26 @@ class Automator
 
   def create_calendar_events(events)
     events.each do |event|
-      # Insert new events
-      response = @client.execute!(
-        :api_method => @calendar_api.events.insert,
-        :parameters => {
-          :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
-        },
-        :body_object => event )
-      puts response
+      create_calendar_event(event)
       sleep(0.1) # Wait before requesting from the api again
     end
   end
 
-  def list_calendar_events(limit = 10)
+  def create_calendar_event(event)
+    # Insert new events
+    response = @client.execute(
+      :api_method => @calendar_api.events.insert,
+      :parameters => {
+        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+      },
+      :body_object => event )
+    binding.pry
+    puts response.data
+  end
+
+  def list_calendar_events(limit = 250)
     # Fetch the next n(10) events for the user
-    results = @client.execute!(
+    results = @client.execute(
       :api_method => @calendar_api.events.list,
       :parameters => {
         :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
@@ -177,12 +206,73 @@ class Automator
         :orderBy => 'startTime',
         :timeMin => Time.now.iso8601 })
 
-    puts "Upcoming events:"
-    puts "No upcoming events found" if results.data.items.empty?
+    puts "Upcoming events:".blue
+    puts "No upcoming events found".yellow if results.data.items.empty?
     results.data.items.each do |event|
       start = event.start.date || event.start.date_time
-      puts "- #{event.summary} (#{start})"
+      puts "- #{event.summary} (#{start.strftime("%B %d, %Y")})".magenta
+      puts event.id
+      puts "------------------------------"
     end
+  end
+
+  def find_events(events)
+    event_objects = []
+    events.each do |event|
+      data = find_event(event['attributes']['EVENT_NAME'])
+      puts "Could not find event with name #{event['attributes']['EVENT_NAME']}" if data.nil?
+      event_objects << data unless data.nil?
+      sleep(0.1) # Wait before requesting from the api again
+    end
+    binding.pry
+    event_objects
+  end
+
+  def find_event(text)
+    results = @client.execute(
+      :api_method => @calendar_api.events.list,
+      :parameters => {
+        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :maxResults => 1,
+        :q => text })
+
+    return (results.data.items.empty? ? nil : results.data.items[0])
+  end
+
+  def update_events(events)
+    binding.pry
+    events.each do |event|
+      update_events(event)
+      sleep(0.1) # Wait before requesting from the api again
+    end
+  end
+
+  def update_event(event)
+    result = @client.execute(
+      :api_method => @calendar_api.events.update,
+      :parameters => {
+        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :eventId => event.id },
+      :body_object => event,
+      :headers => {'Content-Type' => 'application/json'})
+    puts result.data.updated
+  end
+
+  def delete_calendar_events(events)
+    events.each do |event|
+      delete_calendar_event(event)
+      sleep(0.1) # Wait before requesting from the api again
+    end
+  end
+
+  def delete_calendar_event(event)
+    result = @client.execute(
+      :api_method => @calendar_api.events.delete,
+      :parameters => {
+        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :eventId => event.id })
+    binding.pry
+    puts result.data
   end
 
 end
