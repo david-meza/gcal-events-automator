@@ -8,6 +8,7 @@ require 'pry'
 require 'http'
 require 'colorize'
 require 'json'
+require 'redis'
 
 
 class Automator
@@ -22,11 +23,13 @@ class Automator
 
   def initialize
     init_calendar_api
+    init_redis
     @raw_events = get_events
     store(@raw_events.to_json, TEMP_DB_PATH)
     update_calendar
     remove_temp_file
     list_calendar_events
+    # delete_calendar_events(all_events)
   end
 
   
@@ -37,6 +40,10 @@ class Automator
     @client = Google::APIClient.new(:application_name => APPLICATION_NAME)
     @client.authorization = authorize
     @calendar_api = @client.discovered_api('calendar', 'v3')
+  end
+
+  def init_redis
+    @redis = Redis.new
   end
 
   def authorize
@@ -69,15 +76,11 @@ class Automator
   end
 
   def get_differences
-    store(@raw_events) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
-    
-    begin
-      old_events = JSON.parse(File.read(DB_PATH))['features']
-      new_events = JSON.parse(File.read(TEMP_DB_PATH))['features']
-    rescue => err
-      p err
-      return puts "Could not parse file because of the error above"
-    end
+    store({'features': []}.to_json) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
+
+    old_events = JSON.parse(File.read(DB_PATH))['features']
+    new_events = JSON.parse(File.read(TEMP_DB_PATH))['features']
+
     old_events_hash = {}
     # Make a map for faster indexing
     old_events.each do |event|
@@ -191,7 +194,7 @@ class Automator
         :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
       },
       :body_object => event )
-    binding.pry
+
     puts response.data
   end
 
@@ -240,9 +243,8 @@ class Automator
   end
 
   def update_events(events)
-    binding.pry
     events.each do |event|
-      update_events(event)
+      update_event(event)
       sleep(0.1) # Wait before requesting from the api again
     end
   end
@@ -271,8 +273,7 @@ class Automator
       :parameters => {
         :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
         :eventId => event.id })
-    binding.pry
-    puts result.data
+    puts result
   end
 
 end
