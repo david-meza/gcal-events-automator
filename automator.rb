@@ -8,6 +8,7 @@ require 'pry'
 require 'http'
 require 'colorize'
 require 'json'
+require 'dotenv'
 
 
 class Automator
@@ -322,6 +323,7 @@ class Automator
 end
 
 
+Dotenv.load
 a = Automator.new
 a.check_event_updates
 

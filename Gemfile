@@ -6,7 +6,7 @@ ruby '2.2.3'
 gem 'http', '~> 0.9.8'
 gem 'google-api-client', '~> 0.8.6'
 gem 'colorize', '~> 0.7.7'
-gem 'redis', '~>3.2'
+gem 'dotenv', '~>2.0.2'
 
 
 # Dev dependencies
