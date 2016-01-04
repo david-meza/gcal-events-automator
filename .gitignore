@@ -1,11 +1,11 @@
 # client_secret.json
 # calendar_special_events_credentials.json
 # database_events.json
-*.json
 
+*.json
 
 /.bundle/
 /vendor/bundle
-/lib/bundler/man/
 Gemfile.lock
 
+.env
