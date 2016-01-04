@@ -8,7 +8,6 @@ require 'pry'
 require 'http'
 require 'colorize'
 require 'json'
-require 'redis'
 
 
 class Automator
@@ -23,17 +22,41 @@ class Automator
 
   def initialize
     init_calendar_api
-    init_redis
     @raw_events = get_events
+    @gis_token = authorize_arcgis
+  end
+
+  def check_event_updates
     store(@raw_events.to_json, TEMP_DB_PATH)
+    binding.pry
     update_calendar
     remove_temp_file
-    list_calendar_events
+    # list_calendar_events(5)
+
+    # Uncomment when you need to delete everything that's on Google Calendar
+    # all_events = list_calendar_events
     # delete_calendar_events(all_events)
   end
 
   
   private
+
+  #Sample Event
+  # {"attributes":
+  #   { "OBJECTID":30,
+  #     "EVENT_NAME":"Charity Dodgeball Tournament",
+  #     "EVENT_STARTDATE":1444968000000,
+  #     "EVENT_ENDDATE":1444968000000,
+  #     "SETUP_STARTTIME":"12p",
+  #     "BREAKDOWN_ENDTIME":"9p",
+  #     "EVENT_TYPE":"General Event",
+  #     "STATUS":"Cancelled",
+  #     "COMMENTS":null,
+  #     "EVENT_CONTACT":"Allen Cobb",
+  #     "PHONE":"9104097467",
+  #     "EMAIL":"allencobb@gmail.com"
+  #   }
+  # }
 
 
   def init_calendar_api
@@ -42,9 +65,6 @@ class Automator
     @calendar_api = @client.discovered_api('calendar', 'v3')
   end
 
-  def init_redis
-    @redis = Redis.new
-  end
 
   def authorize
     FileUtils.mkdir_p(File.dirname(CREDENTIALS_PATH))
@@ -99,7 +119,7 @@ class Automator
         changed_events << event
       # Else both events are the same and we don't need to do anything
       end
-      # Remove this event so we know that anything that's left in the end was deleted
+      # Remove this event so we know that any events that are left in the end are deleted
       old_events_hash.delete(event['attributes']['OBJECTID'])
 
     end
@@ -117,10 +137,18 @@ class Automator
 
     # Find any differences between the old events db and the most recent one
     differences = get_differences
-    puts "Found #{differences[:new_events].length} new events, #{differences[:changed_events].length} events modified, and #{differences[:deleted_events].length} deleted events since last check".green
+    puts "*****************************\nFound #{differences[:new_events].length} new events, #{differences[:changed_events].length} events modified, and #{differences[:deleted_events].length} deleted events since last check\n*****************************".green
+
     handle_changes(differences)
 
-    store(@raw_events.to_json)    
+    # Store the most recent version of the arcgis db locally (with possible GoogleID additions)
+    store(get_events.to_json)    
+  end
+
+  def authorize_arcgis
+    response_body = HTTP.post('https://maps.raleighnc.gov/arcgis/tokens/', :form => { :username => ENV['ARCGIS_USERNAME'], :password => ENV['ARCGIS_PASSWORD'], :f => 'json'}).body.to_s
+    puts "Temporary arcgis auth token (expires in 1 hour):"
+    p JSON.parse(response_body)['token']
   end
 
   def handle_changes(diff)
@@ -130,18 +158,18 @@ class Automator
   end
 
   def make_new_events(new_evs)
-    new_events = extract_events_data(new_evs)
-    create_calendar_events(new_events)
+    processed_new_events = extract_events_data(new_evs)
+    create_calendar_events(processed_new_events)
   end
 
   def change_existing_events(changed_evs)
-    changed_events = find_events(changed_evs)
-    update_events(changed_events)
+    processed_changed_events = extract_events_data(changed_evs)
+    update_events(processed_changed_events)
   end
 
   def erase_events(del_evs)
-    deleted_events = find_events(del_evs)
-    delete_calendar_events(deleted_events)
+    processed_deleted_events = extract_events_data(del_evs)
+    delete_calendar_events(processed_deleted_events)
   end
 
   def extract_events_data(events_arr)
@@ -159,6 +187,8 @@ class Automator
         'summary' => event['attributes']['EVENT_NAME'],
         # 'location' => '800 Howard St., San Francisco, CA 94103',
         'description' => description,
+        'OBJECTID' => event['attributes']['OBJECTID'],
+        'GOOGLEID' => event['attributes']['GOOGLEID'],
         'status' => (event['attributes']['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(event['attributes']['STATUS']) ? event['attributes']['STATUS'].downcase : "confirmed") : "tentative"),
         'start' => {
           'dateTime' => Time.at(event['attributes']['EVENT_STARTDATE'] / 1000).to_datetime.rfc3339,
@@ -174,7 +204,7 @@ class Automator
   end
 
   def get_events
-    response_body = HTTP.headers(:accept => "application/json").get('https://maps.raleighnc.gov/arcgis/rest/services/SpecialEvents/SpecialEventsView/MapServer/0/query?where=1=1&outFields=OBJECTID,EVENT_NAME,EVENT_STARTDATE,EVENT_ENDDATE,SETUP_STARTTIME,BREAKDOWN_ENDTIME,EVENT_TYPE,STATUS,COMMENTS,EVENT_CONTACT,PHONE,EMAIL&returnGeometry=false&f=json').to_s
+    response_body = HTTP.headers(:accept => "application/json").get('https://maps.raleighnc.gov/arcgis/rest/services/SpecialEvents/SpecialEventsView/MapServer/0/query?where=1=1&outFields=OBJECTID,GOOGLEID,EVENT_NAME,EVENT_STARTDATE,EVENT_ENDDATE,SETUP_STARTTIME,BREAKDOWN_ENDTIME,EVENT_TYPE,STATUS,COMMENTS,EVENT_CONTACT,PHONE,EMAIL&returnGeometry=false&f=json').to_s
     JSON.parse(response_body)
   end
 
@@ -195,7 +225,16 @@ class Automator
       },
       :body_object => event )
 
-    puts response.data
+    puts "Created new event #{response.data.summary} with id #{response.data.id}".cyan
+
+    add_googleid(event, response.data)
+  end
+
+  def add_googleid(arcgis_event, google_event)
+    response = HTTP.post('http://maps.raleighnc.gov/arcgis/rest/services/SpecialEvents/SpecialEvents/FeatureServer/0/updateFeatures', :form => { features: [{"attributes": { "OBJECTID" => arcgis_event['OBJECTID'], "GOOGLEID" => google_event.id } } ].to_json, token: @gis_token, f: 'json' })
+
+    puts "Attempting to add Google ID attribute to the ARCGIS database".blue
+    puts response.body.to_s
   end
 
   def list_calendar_events(limit = 250)
@@ -209,12 +248,14 @@ class Automator
         :orderBy => 'startTime',
         :timeMin => Time.now.iso8601 })
 
-    puts "Upcoming events:".blue
+    puts "\nUpcoming events:\n".blue
     puts "No upcoming events found".yellow if results.data.items.empty?
+    
     results.data.items.each do |event|
+      event['GOOGLEID'] = event.id
       start = event.start.date || event.start.date_time
       puts "- #{event.summary} (#{start.strftime("%B %d, %Y")})".magenta
-      puts event.id
+      puts event.htmlLink
       puts "------------------------------"
     end
   end
@@ -227,7 +268,7 @@ class Automator
       event_objects << data unless data.nil?
       sleep(0.1) # Wait before requesting from the api again
     end
-    binding.pry
+
     event_objects
   end
 
@@ -254,10 +295,11 @@ class Automator
       :api_method => @calendar_api.events.update,
       :parameters => {
         :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
-        :eventId => event.id },
+        :eventId => event['GOOGLEID'] },
       :body_object => event,
       :headers => {'Content-Type' => 'application/json'})
-    puts result.data.updated
+    
+    puts "Updated event #{result.data.summary}."
   end
 
   def delete_calendar_events(events)
@@ -272,12 +314,14 @@ class Automator
       :api_method => @calendar_api.events.delete,
       :parameters => {
         :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
-        :eventId => event.id })
-    puts result
+        :eventId => event['GOOGLEID'] })
+
+    puts "Deleted event #{event['summary']}."
   end
 
 end
 
 
-Automator.new
+a = Automator.new
+a.check_event_updates
 
