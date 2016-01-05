@@ -14,14 +14,16 @@ require 'dotenv'
 class Automator
 
   APPLICATION_NAME = 'Special Events Automator'
-  CLIENT_SECRETS_PATH = 'client_secret.json'
-  # CREDENTIALS_PATH = File.join(Dir.home, '.credentials', "calendar_special_events_credentials.json")
-  CREDENTIALS_PATH = 'calendar_special_events_credentials.json'
-  DB_PATH = 'database_events.json'
-  TEMP_DB_PATH = "temp.json"
+  # CLIENT_SECRETS_PATH = 'client_secret.json'
+  CLIENT_SECRETS_PATH = File.join(Dir.home, '.credentials', 'client_secret.json')
+  CREDENTIALS_PATH = File.join(Dir.home, '.credentials', "calendar_special_events_credentials.json")
+  # CREDENTIALS_PATH = 'calendar_special_events_credentials.json'
+  DB_PATH = File.join(Dir.home, '.tmp', 'database_events.json')
+  TEMP_DB_PATH = File.join(Dir.home, '.tmp', "temp.json")
   SCOPE = 'https://www.googleapis.com/auth/calendar'
 
   def initialize
+    create_directories
     init_calendar_api
     @raw_events = get_events
     @gis_token = authorize_arcgis
@@ -29,10 +31,9 @@ class Automator
 
   def check_event_updates
     store(@raw_events.to_json, TEMP_DB_PATH)
-    binding.pry
     update_calendar
     remove_temp_file
-    # list_calendar_events(5)
+    list_calendar_events(5)
 
     # Uncomment when you need to delete everything that's on Google Calendar
     # all_events = list_calendar_events
@@ -41,6 +42,12 @@ class Automator
 
   
   private
+
+  def create_directories
+    FileUtils.mkdir_p(File.join(Dir.home, '.credentials'))
+    FileUtils.mkdir_p(File.join(Dir.home, '.tmp'))
+    FileUtils.touch(DB_PATH, { verbose: true })
+  end
 
   #Sample Event
   # {"attributes":
@@ -87,6 +94,8 @@ class Automator
   end
 
   def store(content, path = DB_PATH)
+    FileUtils.mkdir_p(File.dirname(path))
+    
     file = File.open(path, "w")
     file.write(content)
     file.close
@@ -222,7 +231,7 @@ class Automator
     response = @client.execute(
       :api_method => @calendar_api.events.insert,
       :parameters => {
-        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :calendarId => ENV['CALENDAR_ID'],
       },
       :body_object => event )
 
@@ -243,13 +252,13 @@ class Automator
     results = @client.execute(
       :api_method => @calendar_api.events.list,
       :parameters => {
-        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :calendarId => ENV['CALENDAR_ID'],
         :maxResults => limit,
         :singleEvents => true,
         :orderBy => 'startTime',
         :timeMin => Time.now.iso8601 })
 
-    puts "\nUpcoming events:\n".blue
+    puts "\nUpcoming events (listing first #{limit}):\n".blue
     puts "No upcoming events found".yellow if results.data.items.empty?
     
     results.data.items.each do |event|
@@ -277,7 +286,7 @@ class Automator
     results = @client.execute(
       :api_method => @calendar_api.events.list,
       :parameters => {
-        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :calendarId => ENV['CALENDAR_ID'],
         :maxResults => 1,
         :q => text })
 
@@ -295,7 +304,7 @@ class Automator
     result = @client.execute(
       :api_method => @calendar_api.events.update,
       :parameters => {
-        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :calendarId => ENV['CALENDAR_ID'],
         :eventId => event['GOOGLEID'] },
       :body_object => event,
       :headers => {'Content-Type' => 'application/json'})
@@ -314,7 +323,7 @@ class Automator
     result = @client.execute(
       :api_method => @calendar_api.events.delete,
       :parameters => {
-        :calendarId => 's97r7oev8povdf65o3hmftd0to@group.calendar.google.com',
+        :calendarId => ENV['CALENDAR_ID'],
         :eventId => event['GOOGLEID'] })
 
     puts "Deleted event #{event['summary']}."
