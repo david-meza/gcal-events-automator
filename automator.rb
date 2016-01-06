@@ -14,10 +14,8 @@ require 'dotenv'
 class Automator
 
   APPLICATION_NAME = 'Special Events Automator'
-  # CLIENT_SECRETS_PATH = 'client_secret.json'
   CLIENT_SECRETS_PATH = File.join(Dir.home, '.credentials', 'client_secret.json')
   CREDENTIALS_PATH = File.join(Dir.home, '.credentials', "calendar_special_events_credentials.json")
-  # CREDENTIALS_PATH = 'calendar_special_events_credentials.json'
   DB_PATH = File.join(Dir.home, '.tmp', 'database_events.json')
   TEMP_DB_PATH = File.join(Dir.home, '.tmp', "temp.json")
   SCOPE = 'https://www.googleapis.com/auth/calendar'
@@ -32,12 +30,14 @@ class Automator
   def check_event_updates
     store(@raw_events.to_json, TEMP_DB_PATH)
     update_calendar
-    remove_temp_file
-    list_calendar_events(5)
+    remove_file(TEMP_DB_PATH)
+    list_calendar_events(2)
+    puts @e ? "Finished running script with the following exception: #{@e}".red : "Finished running script with no errors".green
 
     # Uncomment when you need to delete everything that's on Google Calendar
     # all_events = list_calendar_events
     # delete_calendar_events(all_events)
+    # remove_file(DB_PATH)
   end
 
   
@@ -93,23 +93,27 @@ class Automator
     auth
   end
 
-  def store(content, path = DB_PATH)
-    FileUtils.mkdir_p(File.dirname(path))
-    
+  def store(content, path = DB_PATH)    
     file = File.open(path, "w")
     file.write(content)
     file.close
   end
 
-  def remove_temp_file
-    FileUtils.remove_file(TEMP_DB_PATH, true)
+  def remove_file(path = TEMP_DB_PATH)
+    FileUtils.remove_file(path, true)
   end
 
   def get_differences
     store({'features': []}.to_json) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
 
-    old_events = JSON.parse(File.read(DB_PATH))['features']
-    new_events = JSON.parse(File.read(TEMP_DB_PATH))['features']
+    begin
+      old_events = JSON.parse(File.read(DB_PATH))['features']
+      new_events = JSON.parse(File.read(TEMP_DB_PATH))['features']
+    rescue => @e
+      puts "Exception ocurred: #{@e}"
+      old_events = []
+      new_events = []
+    end
 
     old_events_hash = {}
     # Make a map for faster indexing
@@ -188,10 +192,13 @@ class Automator
 
       next if event['attributes']['EVENT_STARTDATE'].nil? || event['attributes']['EVENT_ENDDATE'].nil?
 
-      description = (event['attributes']['COMMENTS']      ? (event['attributes']['COMMENTS'] + "\n")                      : "") +
+      description = (event['attributes']['COMMENTS']      ? (               event['attributes']['COMMENTS'] + "\n\n")       : "") +
                     (event['attributes']['EVENT_CONTACT'] ? ("Contact: "  + event['attributes']['EVENT_CONTACT']) + "\n"  : "") +
                     (event['attributes']['PHONE']         ? ("Phone: "    + event['attributes']['PHONE']) + "\n"          : "") +
                     (event['attributes']['EMAIL']         ? ("Email: "    + event['attributes']['EMAIL']) + "\n"          : "")
+
+      start_time = event['attributes']['SETUP_STARTTIME'] ? parse_time_to_seconds(event['attributes']['SETUP_STARTTIME'])   : 0
+      end_time = event['attributes']['BREAKDOWN_ENDTIME'] ? parse_time_to_seconds(event['attributes']['BREAKDOWN_ENDTIME']) : 0
 
       filtered_events << {
         'summary' => event['attributes']['EVENT_NAME'],
@@ -201,16 +208,29 @@ class Automator
         'GOOGLEID' => event['attributes']['GOOGLEID'],
         'status' => (event['attributes']['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(event['attributes']['STATUS']) ? event['attributes']['STATUS'].downcase : "confirmed") : "tentative"),
         'start' => {
-          'dateTime' => Time.at(event['attributes']['EVENT_STARTDATE'] / 1000).to_datetime.rfc3339,
+          'dateTime' => Time.at( (event['attributes']['EVENT_STARTDATE'] / 1000) + start_time).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         },
         'end' => {
-          'dateTime' => Time.at(event['attributes']['EVENT_ENDDATE'] / 1000).to_datetime.rfc3339,
+          'dateTime' => Time.at( (event['attributes']['EVENT_ENDDATE'] / 1000) + end_time).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         }
       }
     end
     filtered_events
+  end
+
+  def parse_time_to_seconds(standard_time)
+    # Matches different formats like "7:00pm" or "07:00PM" or "7:00 pm"
+    original, hours, minutes, am_or_pm = standard_time.match( /(\d+):(\d+)\s*(am|pm)/i ).to_a
+    return 0 if hours.nil? || minutes.nil? || am_or_pm.nil? # Sorry I didn't get your formatting (e.g. 7pm)
+    hours, minutes, am_or_pm = hours.to_i, minutes.to_i, am_or_pm.downcase
+
+    # Normalize hours to 0 if they are 12, so we can easily add the am/pm offset
+    hours = 0 if am_or_pm == 'am' && hours == 12 || am_or_pm == 'pm' && hours == 12
+    
+    # Return parsed time in SECONDS
+    hours * 3600 + minutes * 60 + (am_or_pm.downcase == 'am' ? 0 : 43200) 
   end
 
   def get_events
@@ -324,9 +344,9 @@ class Automator
       :api_method => @calendar_api.events.delete,
       :parameters => {
         :calendarId => ENV['CALENDAR_ID'],
-        :eventId => event['GOOGLEID'] })
+        :eventId => event['GOOGLEID'] || event.id })
 
-    puts "Deleted event #{event['summary']}."
+    puts "Deleted event #{event['summary'] || event.summary}."
   end
 
 end
