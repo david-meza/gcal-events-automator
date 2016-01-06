@@ -32,7 +32,7 @@ class Automator
     update_calendar
     remove_file(TEMP_DB_PATH)
     list_calendar_events(2)
-    puts @e ? "Finished running script with the following exception: #{@e}".red : "Finished running script with no errors".green
+    puts @e ? "Finished running script with the following exception: #{@e}".red : "Finished running script with no errors at #{Time.now.strftime("%I:%M%p")}".green
 
     # Uncomment when you need to delete everything that's on Google Calendar
     # all_events = list_calendar_events
