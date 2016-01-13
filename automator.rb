@@ -225,9 +225,16 @@ class Automator
   end
 
   def parse_time_to_seconds(standard_time)
-    # Matches different formats like "7:00pm" or "07:00PM" or "7:00 pm"
-    original, hours, minutes, am_or_pm = standard_time.match( /(\d+):(\d+)\s*(am|pm)/i ).to_a
-    return 0 if hours.nil? || minutes.nil? || am_or_pm.nil? # Sorry I didn't get your formatting (e.g. 7pm)
+    # Matches different formats like "7pm" or "7:00pm" or "07:00PM" or "7:00 pm"
+    original, hours, minutes, am_or_pm = standard_time.match( /(\d+):(\d+)\s*(am|pm)|(\d+)\s*(am|pm)/i ).to_a.reject(&:nil?)
+    
+    if hours && minutes && am_or_pm.nil?
+      am_or_pm = minutes
+      minutes = "00"
+    end
+    
+    return 0 if hours.nil? || minutes.nil? || am_or_pm.nil? # Sorry I didn't get your formatting (e.g. 7:00 or 7 or 19:00)
+    
     hours, minutes, am_or_pm = hours.to_i, minutes.to_i, am_or_pm.downcase
 
     # Normalize hours to 0 if they are 12, so we can easily add the am/pm offset
@@ -266,6 +273,8 @@ class Automator
     retry unless (tries -= 1).zero?
   
   else
+    binding.pry
+    return @store = (puts "ERROR: Could not create #{event['summary']} because of this: \n #{response.body}".red) if response.status == 400
     puts "Created new event #{response.data.summary} with id #{response.data.id}".cyan
     add_googleid(event, response.data)
   end
