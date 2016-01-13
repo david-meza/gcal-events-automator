@@ -23,6 +23,7 @@ class Automator
   def initialize
     create_directories
     init_calendar_api
+    @store = true
     @raw_events = get_events
     @gis_token = authorize_arcgis
   end
@@ -31,11 +32,12 @@ class Automator
     store(@raw_events.to_json, TEMP_DB_PATH)
     update_calendar
     remove_file(TEMP_DB_PATH)
-    list_calendar_events(2)
+    list_calendar_events
     puts @e ? "Finished running script with the following exception: #{@e}".red : "Finished running script with no errors at #{Time.now.strftime("%I:%M%p")}".green
 
     # Uncomment when you need to delete everything that's on Google Calendar
     # all_events = list_calendar_events
+    # print_events(all_events)
     # delete_calendar_events(all_events)
     # remove_file(DB_PATH)
   end
@@ -156,7 +158,7 @@ class Automator
     handle_changes(differences)
 
     # Store the most recent version of the arcgis db locally (with possible GoogleID additions)
-    store(get_events.to_json)    
+    store(get_events.to_json) if @store   
   end
 
   def authorize_arcgis
@@ -190,29 +192,31 @@ class Automator
     filtered_events = []
     events_arr.each do |event|
 
-      next if event['attributes']['EVENT_STARTDATE'].nil? || event['attributes']['EVENT_ENDDATE'].nil?
+      ev = event['attributes']
 
-      description = (event['attributes']['COMMENTS']      ? (               event['attributes']['COMMENTS'] + "\n\n")       : "") +
-                    (event['attributes']['EVENT_CONTACT'] ? ("Contact: "  + event['attributes']['EVENT_CONTACT']) + "\n"  : "") +
-                    (event['attributes']['PHONE']         ? ("Phone: "    + event['attributes']['PHONE']) + "\n"          : "") +
-                    (event['attributes']['EMAIL']         ? ("Email: "    + event['attributes']['EMAIL']) + "\n"          : "")
+      next if ev['EVENT_STARTDATE'].nil? || ev['EVENT_ENDDATE'].nil? || ev['EVENT_NAME'].downcase.include?("construction")
 
-      start_time = event['attributes']['SETUP_STARTTIME'] ? parse_time_to_seconds(event['attributes']['SETUP_STARTTIME'])   : 0
-      end_time = event['attributes']['BREAKDOWN_ENDTIME'] ? parse_time_to_seconds(event['attributes']['BREAKDOWN_ENDTIME']) : 0
+      description = (ev['COMMENTS']      ? (               ev['COMMENTS'] + "\n\n")       : "") +
+                    (ev['EVENT_CONTACT'] ? ("Contact: "  + ev['EVENT_CONTACT']) + "\n"  : "") +
+                    (ev['PHONE']         ? ("Phone: "    + ev['PHONE']) + "\n"          : "") +
+                    (ev['EMAIL']         ? ("Email: "    + ev['EMAIL']) + "\n"          : "")
+
+      start_time = ev['SETUP_STARTTIME'] ? parse_time_to_seconds(ev['SETUP_STARTTIME'])   : 0
+      end_time = ev['BREAKDOWN_ENDTIME'] ? parse_time_to_seconds(ev['BREAKDOWN_ENDTIME']) : 0
 
       filtered_events << {
-        'summary' => event['attributes']['EVENT_NAME'],
+        'summary' => ev['EVENT_NAME'],
         # 'location' => '800 Howard St., San Francisco, CA 94103',
         'description' => description,
-        'OBJECTID' => event['attributes']['OBJECTID'],
-        'GOOGLEID' => event['attributes']['GOOGLEID'],
-        'status' => (event['attributes']['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(event['attributes']['STATUS']) ? event['attributes']['STATUS'].downcase : "confirmed") : "tentative"),
+        'OBJECTID' => ev['OBJECTID'],
+        'GOOGLEID' => ev['GOOGLEID'],
+        'status' => (ev['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(ev['STATUS']) ? ev['STATUS'].downcase : "confirmed") : "tentative"),
         'start' => {
-          'dateTime' => Time.at( (event['attributes']['EVENT_STARTDATE'] / 1000) + start_time).to_datetime.rfc3339,
+          'dateTime' => Time.at( (ev['EVENT_STARTDATE'] / 1000) + start_time).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         },
         'end' => {
-          'dateTime' => Time.at( (event['attributes']['EVENT_ENDDATE'] / 1000) + end_time).to_datetime.rfc3339,
+          'dateTime' => Time.at( (ev['EVENT_ENDDATE'] / 1000) + end_time).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         }
       }
@@ -261,33 +265,37 @@ class Automator
   end
 
   def add_googleid(arcgis_event, google_event)
+    puts "Attempting to add Google ID attribute to the ARCGIS database".blue
     response = HTTP.post('http://maps.raleighnc.gov/arcgis/rest/services/SpecialEvents/SpecialEvents/FeatureServer/0/updateFeatures', :form => { features: [{"attributes": { "OBJECTID" => arcgis_event['OBJECTID'], "GOOGLEID" => google_event.id } } ].to_json, token: @gis_token, f: 'json' })
 
-    puts "Attempting to add Google ID attribute to the ARCGIS database".blue
-    puts response.body.to_s
+    r = JSON.parse(response.body.to_s)['updateResults'][0]
+    puts r['success'] ? "Successfully updated event with ID #{r['objectId']}".green : "Was not able to update event with ID #{r['objectId']}".red
   end
 
-  def list_calendar_events(limit = 250)
-    # Fetch the next n(10) events for the user
+  def print_events(events)
+    events.each do |event|
+      puts "*************************"
+      puts "Google ID:" + " #{event.id}".green
+      puts "Summary: " + "#{event.summary}".blue
+      puts "Link: #{event.htmlLink}"
+      puts "*************************"
+    end
+  end
+
+  def list_calendar_events(limit = 2500)
     results = @client.execute(
       :api_method => @calendar_api.events.list,
       :parameters => {
         :calendarId => ENV['CALENDAR_ID'],
         :maxResults => limit,
         :singleEvents => true,
-        :orderBy => 'startTime',
-        :timeMin => Time.now.iso8601 })
+        :orderBy => 'startTime' })
 
-    puts "\nUpcoming events (listing first #{limit}):\n".blue
-    puts "No upcoming events found".yellow if results.data.items.empty?
+    puts "\nTotal events in the calendar: #{results.data.items.length}\n".blue
+    puts "No events found in calendar".yellow if results.data.items.empty?
+    puts "\nTotal events in ARCGIS db: #{@raw_events['features'].length}\n".blue
     
-    results.data.items.each do |event|
-      event['GOOGLEID'] = event.id
-      start = event.start.date || event.start.date_time
-      puts "- #{event.summary} (#{start.strftime("%B %d, %Y")})".magenta
-      puts event.htmlLink
-      puts "------------------------------"
-    end
+    results.data.items
   end
 
   def find_events(events)
@@ -314,6 +322,8 @@ class Automator
   end
 
   def update_events(events)
+    return unless events
+
     events.each do |event|
       update_event(event)
       sleep(0.1) # Wait before requesting from the api again
@@ -321,6 +331,8 @@ class Automator
   end
 
   def update_event(event)
+    return @store = (puts "WARNING: Event \"#{event['summary']}\" does not have a GOOGLEID field and cannot be updated in calendar".red) unless event['GOOGLEID']
+
     result = @client.execute(
       :api_method => @calendar_api.events.update,
       :parameters => {
@@ -333,6 +345,8 @@ class Automator
   end
 
   def delete_calendar_events(events)
+    return unless events
+
     events.each do |event|
       delete_calendar_event(event)
       sleep(0.1) # Wait before requesting from the api again
@@ -340,13 +354,16 @@ class Automator
   end
 
   def delete_calendar_event(event)
+    return @store = (puts "WARNING: Event \"#{event['summary']}\" does not have a GOOGLEID field and cannot be deleted from calendar".red) unless event['GOOGLEID'] || event.id
+
     result = @client.execute(
       :api_method => @calendar_api.events.delete,
       :parameters => {
         :calendarId => ENV['CALENDAR_ID'],
         :eventId => event['GOOGLEID'] || event.id })
 
-    puts "Deleted event #{event['summary'] || event.summary}."
+    puts "Google server responded with code #{result.response.status} #{result.response.body}".blue
+    puts "Deleted event #{event['summary'] || event.summary}.".green if result.response.status == 204
   end
 
 end
