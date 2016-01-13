@@ -246,12 +246,12 @@ class Automator
   def create_calendar_events(events)
     events.each do |event|
       create_calendar_event(event)
-      sleep(0.1) # Wait before requesting from the api again
+      # sleep(0.01) # Wait before requesting from the api again
     end
   end
 
   def create_calendar_event(event)
-    # Insert new events
+    tries ||= 5
     response = @client.execute(
       :api_method => @calendar_api.events.insert,
       :parameters => {
@@ -259,8 +259,14 @@ class Automator
       },
       :body_object => event )
 
+  rescue Faraday::SSLError => e
+    puts "Failure/Error: #{e}".red
+    puts "Sleeping for #{10.0/tries} seconds before trying again."
+    sleep(10.0/tries)
+    retry unless (tries -= 1).zero?
+  
+  else
     puts "Created new event #{response.data.summary} with id #{response.data.id}".cyan
-
     add_googleid(event, response.data)
   end
 
@@ -304,7 +310,7 @@ class Automator
       data = find_event(event['attributes']['EVENT_NAME'])
       puts "Could not find event with name #{event['attributes']['EVENT_NAME']}" if data.nil?
       event_objects << data unless data.nil?
-      sleep(0.1) # Wait before requesting from the api again
+      # sleep(0.01) # Wait before requesting from the api again
     end
 
     event_objects
@@ -326,13 +332,14 @@ class Automator
 
     events.each do |event|
       update_event(event)
-      sleep(0.1) # Wait before requesting from the api again
+      # sleep(0.01) # Wait before requesting from the api again
     end
   end
 
   def update_event(event)
     return @store = (puts "WARNING: Event \"#{event['summary']}\" does not have a GOOGLEID field and cannot be updated in calendar".red) unless event['GOOGLEID']
 
+    tries ||= 5
     result = @client.execute(
       :api_method => @calendar_api.events.update,
       :parameters => {
@@ -341,6 +348,13 @@ class Automator
       :body_object => event,
       :headers => {'Content-Type' => 'application/json'})
     
+  rescue Faraday::SSLError => e
+    puts "Failure/Error: #{e}".red
+    puts "Sleeping for #{10.0/tries} seconds before trying again."
+    sleep(10.0/tries)
+    retry unless (tries -= 1).zero?
+  
+  else
     puts "Updated event #{result.data.summary}."
   end
 
@@ -349,19 +363,27 @@ class Automator
 
     events.each do |event|
       delete_calendar_event(event)
-      sleep(0.1) # Wait before requesting from the api again
+      # sleep(0.01) # Wait before requesting from the api again
     end
   end
 
   def delete_calendar_event(event)
     return @store = (puts "WARNING: Event \"#{event['summary']}\" does not have a GOOGLEID field and cannot be deleted from calendar".red) unless event['GOOGLEID'] || event.id
 
+    tries ||= 5
     result = @client.execute(
       :api_method => @calendar_api.events.delete,
       :parameters => {
         :calendarId => ENV['CALENDAR_ID'],
         :eventId => event['GOOGLEID'] || event.id })
 
+  rescue Faraday::SSLError => e
+    puts "Failure/Error: #{e}".red
+    puts "Sleeping for #{10.0/tries} seconds before trying again."
+    sleep(10.0/tries)
+    retry unless (tries -= 1).zero?
+  
+  else
     puts "Google server responded with code #{result.response.status} #{result.response.body}".blue
     puts "Deleted event #{event['summary'] || event.summary}.".green if result.response.status == 204
   end
