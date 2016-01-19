@@ -273,7 +273,6 @@ class Automator
     retry unless (tries -= 1).zero?
   
   else
-    binding.pry
     return @store = (puts "ERROR: Could not create #{event['summary']} because of this: \n #{response.body}".red) if response.status == 400
     puts "Created new event #{response.data.summary} with id #{response.data.id}".cyan
     add_googleid(event, response.data)
@@ -340,7 +339,7 @@ class Automator
     return unless events
 
     events.each do |event|
-      update_event(event)
+      event['GOOGLEID'] ? update_event(event) : create_calendar_event(event)
       # sleep(0.01) # Wait before requesting from the api again
     end
   end
