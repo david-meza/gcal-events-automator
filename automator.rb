@@ -33,7 +33,7 @@ class Automator
     update_calendar
     remove_file(TEMP_DB_PATH)
     list_calendar_events
-    puts @e ? "Finished running script with the following exception: #{@e}".red : "Finished running script with no errors at #{Time.now.strftime("%I:%M%p")}".green
+    puts @e ? "Finished running script with the following exception: #{@e} on #{Time.now.strftime("%A, %b %d at %I:%M%p")}".red : "Finished running script with no errors on #{Time.now.strftime("%A, %b %d at %I:%M%p")}".green
 
     # Uncomment when you need to delete everything that's on Google Calendar
     # all_events = list_calendar_events
@@ -266,7 +266,7 @@ class Automator
       },
       :body_object => event )
 
-  rescue Faraday::SSLError => e
+  rescue => e
     puts "Failure/Error: #{e}".red
     puts "Sleeping for #{10.0/tries} seconds before trying again."
     sleep(10.0/tries)
@@ -356,7 +356,7 @@ class Automator
       :body_object => event,
       :headers => {'Content-Type' => 'application/json'})
     
-  rescue Faraday::SSLError => e
+  rescue => e
     puts "Failure/Error: #{e}".red
     puts "Sleeping for #{10.0/tries} seconds before trying again."
     sleep(10.0/tries)
@@ -385,7 +385,7 @@ class Automator
         :calendarId => ENV['CALENDAR_ID'],
         :eventId => event['GOOGLEID'] || event.id })
 
-  rescue Faraday::SSLError => e
+  rescue => e
     puts "Failure/Error: #{e}".red
     puts "Sleeping for #{10.0/tries} seconds before trying again."
     sleep(10.0/tries)
