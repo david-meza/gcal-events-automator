@@ -204,6 +204,11 @@ class Automator
       start_time = ev['SETUP_STARTTIME'] ? parse_time_to_seconds(ev['SETUP_STARTTIME'])   : 0
       end_time = ev['BREAKDOWN_ENDTIME'] ? parse_time_to_seconds(ev['BREAKDOWN_ENDTIME']) : 0
 
+      start_date = ev['EVENT_STARTDATE'] / 1000 + start_time
+      end_date =  ev['EVENT_ENDDATE'] / 1000 + end_time
+
+      end_date += 86400 while start_date > end_date
+
       filtered_events << {
         'summary' => ev['EVENT_NAME'],
         # 'location' => '800 Howard St., San Francisco, CA 94103',
@@ -212,11 +217,11 @@ class Automator
         'GOOGLEID' => ev['GOOGLEID'],
         'status' => (ev['STATUS'] ? (["Confirmed", "Cancelled", "Tentative"].include?(ev['STATUS']) ? ev['STATUS'].downcase : "confirmed") : "tentative"),
         'start' => {
-          'dateTime' => Time.at( (ev['EVENT_STARTDATE'] / 1000) + start_time).to_datetime.rfc3339,
+          'dateTime' => Time.at( start_date ).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         },
         'end' => {
-          'dateTime' => Time.at( (ev['EVENT_ENDDATE'] / 1000) + end_time).to_datetime.rfc3339,
+          'dateTime' => Time.at( end_date ).to_datetime.rfc3339,
           'timeZone' => 'America/New_York',
         }
       }
