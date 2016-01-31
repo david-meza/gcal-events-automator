@@ -65,6 +65,14 @@ class Automator
   #     "EVENT_CONTACT":"Allen Cobb",
   #     "PHONE":"9104097467",
   #     "EMAIL":"allencobb@gmail.com"
+  #      "GOOGLEID": null,
+        
+        # Unused
+        # "CREATIONDATE": 1454530784000,
+        # "CREATOR": "crossk",
+        # "EDITDATE": 1454530784000,
+        # "EDITOR": "crossk",
+        # "SHAPE.LEN": 8207.2407302067604
   #   }
   # }
 
@@ -106,11 +114,11 @@ class Automator
   end
 
   def get_differences
-    store({'features': []}.to_json) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
+    store([].to_json) if !File.exists?(DB_PATH) || File.zero?(DB_PATH)
 
     begin
-      old_events = JSON.parse(File.read(DB_PATH))['features']
-      new_events = JSON.parse(File.read(TEMP_DB_PATH))['features']
+      old_events = JSON.parse(File.read(DB_PATH))
+      new_events = JSON.parse(File.read(TEMP_DB_PATH))
     rescue => @e
       puts "Exception ocurred: #{@e}"
       old_events = []
@@ -251,7 +259,7 @@ class Automator
 
   def get_events
     response_body = HTTP.headers(:accept => "application/json").get('https://maps.raleighnc.gov/arcgis/rest/services/SpecialEvents/SpecialEventsView/MapServer/0/query?where=1=1&outFields=OBJECTID,GOOGLEID,EVENT_NAME,EVENT_STARTDATE,EVENT_ENDDATE,SETUP_STARTTIME,BREAKDOWN_ENDTIME,EVENT_TYPE,STATUS,COMMENTS,EVENT_CONTACT,PHONE,EMAIL&returnGeometry=false&f=json').to_s
-    JSON.parse(response_body)
+    JSON.parse(response_body)["features"]
   end
 
 
@@ -312,7 +320,7 @@ class Automator
 
     puts "\nTotal events in the calendar: #{results.data.items.length}\n".blue
     puts "No events found in calendar".yellow if results.data.items.empty?
-    puts "\nTotal events in ARCGIS db: #{@raw_events['features'].length}\n".blue
+    puts "\nTotal events in ARCGIS db: #{@raw_events.length}\n".blue
     
     results.data.items
   end
