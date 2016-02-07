@@ -51,38 +51,11 @@ class Automator
     FileUtils.touch(DB_PATH, { verbose: true })
   end
 
-  #Sample Event
-  # {"attributes":
-  #   { "OBJECTID":30,
-  #     "EVENT_NAME":"Charity Dodgeball Tournament",
-  #     "EVENT_STARTDATE":1444968000000,
-  #     "EVENT_ENDDATE":1444968000000,
-  #     "SETUP_STARTTIME":"12p",
-  #     "BREAKDOWN_ENDTIME":"9p",
-  #     "EVENT_TYPE":"General Event",
-  #     "STATUS":"Cancelled",
-  #     "COMMENTS":null,
-  #     "EVENT_CONTACT":"Allen Cobb",
-  #     "PHONE":"9104097467",
-  #     "EMAIL":"allencobb@gmail.com"
-  #      "GOOGLEID": null,
-        
-        # Unused
-        # "CREATIONDATE": 1454530784000,
-        # "CREATOR": "crossk",
-        # "EDITDATE": 1454530784000,
-        # "EDITOR": "crossk",
-        # "SHAPE.LEN": 8207.2407302067604
-  #   }
-  # }
-
-
   def init_calendar_api
     @client = Google::APIClient.new(:application_name => APPLICATION_NAME)
     @client.authorization = authorize
     @calendar_api = @client.discovered_api('calendar', 'v3')
   end
-
 
   def authorize
     FileUtils.mkdir_p(File.dirname(CREDENTIALS_PATH))
